@@ -234,7 +234,7 @@ function quickpaylite_admin_transactions() {
   $limit = 25;
   $result = pager_query($sql, $limit);
   $rows = array();
-  $currency_codes = _eoay_currency_codes();
+  $currency_codes = quickpaylite_currencies();
   $status_codes = _quickpaylite_transaction_status();
   while ($transaction = db_fetch_object($result)) {
     $username = t('Anonymous');

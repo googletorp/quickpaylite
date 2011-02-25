@@ -20,7 +20,7 @@ function quickpaylite_menu() {
   $items = array();
 
   $items['admin/settings/quickpaylite'] = array(
-    'title' => 'Quickpay lite default settings',
+    'title' => 'Quickpay lite settings',
     'description' => 'Here you can setup and configure your Quickpay lite payment settings.',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('quickpaylite_settings_form'),
@@ -293,7 +293,11 @@ function quickpaylite_load_settings($api_module='quickpaylite', $api_delta='defa
  *    Transaction object.
  */
 function quickpaylite_hash_load($hash) {
-  return db_fetch_object(db_query("SELECT * FROM {quickpaylite_transactions} WHERE hash = '%s';", $hash));
+  $transaction = db_fetch_object(db_query("SELECT * FROM {quickpaylite_transactions} WHERE hash = '%s';", $hash));
+  if ($transaction) {
+    $transaction->data = unserialize($transaction->data);
+  }
+  return $transaction;
 }
 
 /**
@@ -306,7 +310,11 @@ function quickpaylite_hash_load($hash) {
  *    Transaction object.
  */
 function quickpaylite_transaction_load($transaction_id) {
-  return db_fetch_object(db_query("SELECT * FROM {quickpaylite_transactions} WHERE transaction_id = %d;", $transaction_id));
+  $transaction = db_fetch_object(db_query("SELECT * FROM {quickpaylite_transactions} WHERE transaction_id = %d;", $transaction_id));
+  if ($transaction) {
+    $transaction->data = unserialize($transaction->data);
+  }
+  return $transaction;
 }
 
 /**
@@ -529,5 +537,18 @@ function quickpaylite_currencies() {
     'NOK' => t('Norske kroner'),
     'EUR' => t('Euro'),
     'USD' => t('US Dollar'),
+  );
+}
+
+/**
+ * Gets array containing translates status messages.
+ */
+function _quickpaylite_transaction_status() {
+  return array(
+    'error' => t('Error'),
+    'in progress' => t('Payment in progress'),
+    'completed' => t('Payment completed'),
+    'canceled' => t('Payment canceled'),
+    'captured' => t('Payment captured')
   );
 }
