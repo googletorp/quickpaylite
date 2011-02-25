@@ -1,5 +1,4 @@
 <?php
-// $Id$
 
 define(QUICKPAYLITE_PAYMENT_WINDOW, 'https://secure.quickpay.dk/form/');
 // The protocol version we implement.
@@ -20,28 +19,59 @@ define(QUICKPAYLITE_VERSION, '3');
 function quickpaylite_menu() {
   $items = array();
 
-  $items['admin/quickpaylite'] = array(
-    'title' => 'Quickpay lite',
-    'description' => 'List Quickpay lite payments',
-    'page callback' => 'quickpaylite_overview_pager',
-    'access arguments' => array('administer Quickpay lite'),
-    'file' => 'quickpaylite.admin.inc',
-  );
-
-  $items['admin/quickpaylite/overview'] = array(
-    'title' => 'Overview',
-    'type' => MENU_DEFAULT_LOCAL_TASK,
-    'weight' => -10,
-  );
-
-  $items['admin/quickpaylite/settings'] = array(
-    'title' => 'Quickpay lite settings',
-    'type' => MENU_LOCAL_TASK,
-    'weight' => 10,
+  $items['admin/settings/quickpaylite'] = array(
+    'title' => 'Quickpay lite default settings',
+    'description' => 'Here you can setup and configure your Quickpay lite payment settings.',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('quickpaylite_settings_form'),
-    'access arguments' => array('administer Quickpay lite'),
+    'access arguments' => array('administer quickpaylite'),
     'file' => 'quickpaylite.admin.inc',
+  );
+
+  $items['admin/settings/quickpaylite/settings'] = array(
+    'title' => 'Settings',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    '#weight' => -1,
+  );
+
+  $items['admin/settings/quickpaylite/list'] = array(
+    'title' => 'List implementations',
+    'description' => 'Show a list of all enabled payment implementations.',
+    'page callback' => 'quickpaylite_admin_list_implementations',
+    'access arguments' => array('administer quickpaylite'),
+    'file' => 'quickpaylite.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  $items['admin/settings/quickpaylite/edit/%/%'] = array(
+    'title' => 'Change quickpaylite implementation settings',
+    'description' => 'Here you can setup and configure your quickpaylite payment settings.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('quickpaylite_admin_settings_form', 4, 5),
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('administer quickpaylite'),
+    'file' => 'quickpaylite.admin.inc',
+  );
+
+  $items['admin/settings/quickpaylite/transactions'] = array(
+    'title' => 'quickpaylite transactions',
+    'description' => 'A table of the transactions made with the quickpaylite module.',
+    'page callback' => 'quickpaylite_admin_transactions',
+    'access arguments' => array('administer quickpaylite transactions'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'quickpaylite.admin.inc',
+    '#weight' => 0,
+  );
+
+  $items['admin/settings/quickpaylite/transaction/%quickpaylite_transaction/logs'] = array(
+    'title' => 'quickpaylite transaction logs',
+    'description' => 'A table of the logs for a transaction made with the quickpaylite module.',
+    'page callback' => 'quickpaylite_admin_transaction_logs',
+    'page arguments' => array(4),
+    'access arguments' => array('administer quickpaylite transaction logs'),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'quickpaylite.admin.inc',
+    '#weight' => 0,
   );
 
   $items['payment/quickpaylite/callback/%quickpaylite_hash'] = array(
@@ -52,16 +82,16 @@ function quickpaylite_menu() {
     'page arguments' => array(3),
     'access callback' => TRUE,
   );
-  $items['payment/quickpaylite/accept/%quickpaylite_hash'] = array(
-    'title' => 'quickpaylite payment accepted',
+  $items['payment/quickpaylite/continue/%quickpaylite_hash'] = array(
+    'title' => 'Payment accepted',
     'description' => '',
     'type' => MENU_CALLBACK,
     'page callback' => 'quickpaylite_transaction_complete',
     'page arguments' => array(3),
     'access callback' => TRUE,
   );
-  $items['payment/quickpaylite/decline/%quickpaylite_hash'] = array(
-    'title' => 'quickpaylite payment cancelled',
+  $items['payment/quickpaylite/cancel/%quickpaylite_hash'] = array(
+    'title' => 'Payment cancelled',
     'description' => '',
     'type' => MENU_CALLBACK,
     'page callback' => 'quickpaylite_transaction_cancel',
@@ -113,16 +143,18 @@ function quickpaylite_create_log($transaction_id, $status, $message='', $update=
  * Returns information about every themable function defined by the module.
  */
 function quickpaylite_theme() {
-  $items = array();
-  $items['quickpaylite_overview_form'] = array(
-    'arguments' => array('form' => array()),
-    'file' => 'quickpaylite.admin.inc',
+  return array(
+    'quickpaylite_complete_page' => array(
+      'template' => 'quickpaylite-complete-page',
+      'arguments' => array('transaction' => NULL),
+      'file' => 'quickpaylite.theme.inc',
+    ),
+    'quickpaylite_cancel_page' => array(
+      'template' => 'quickpaylite-cancel-page',
+      'arguments' => array('transaction' => NULL),
+      'file' => 'quickpaylite.theme.inc',
+    ),
   );
-  $items['quickpaylite_record'] = array(
-    'arguments' => array('record' => array()),
-    'file' => 'quickpaylite.pages.inc',
-  );
-  return $items;
 }
 
 /**
@@ -154,29 +186,53 @@ function quickpaylite_quickpayliteapi($op = 'info', $delta = NULL, &$transaction
  *    data on the actual transaction itself.
  */
 function quickpaylite_make_transaction($data, $op='standardwindow') {
+  if (isset($data['data'])) {
+    $data['data'] = serialize($data['data']);
+  }
+
   $default = array(
+    'api_module' => 'quickpaylite',
+    'api_delta' => 'default',
+    'protocol' => QUICKPAYLITE_VERSION,
+    'msgtype' => '',
+    'merchant' => '',
+    'language' => '',
+    'ordernumber' => '',
     'amount' => '',
-    'order_id' => '',
-    'ordre_text' => '',
-    'description_text' => '',
-    'api_module' => '',
-    'api_delta' => '',
+    'currency' => '',
+    'continueurl' => '',
+    'cancelurl' => '',
+    'callbackurl' => '',
+    'autocapture' => '',
+    'autofee' => '',
+    'cardtypelock' => '',
+    'description' => '',
+    'testmode' => '',
+    'customer_uid' => $_GLOBALS['user']->uid,
+    'payment_time' => time(),
   );
-  $merged_default = array_merge($default, $data);
+
+  $values = array_merge($default, $data);
   // Get settings info.
   $settings = quickpaylite_load_settings($merged_default['api_module'], $merged_default['api_delta']);
-  // Create the values used in the transaction based on default (empty) values and settings.
-  // It is possible to overwrite all settings with the $data array.
-  $values = array_merge($settings, $merged_default);
+
+  // Fill out empty data with settings.
+  foreach ($settings as $key => $value) {
+    if (!isset($values[$key]) || empty($values[$key])) {
+      $values[$key] = $settings[$key];
+    }
+  }
+
   // Create unique hash that can be used as identifier.
   $values['hash'] = sha1(time() . drupal_get_private_key());
-  $transaction = (object) array_merge(array('payment_time' => time(), 'customer_uid' => $_GLOBALS['user']->uid), $values);
+  $transaction = (object) $values;
   $transaction->transaction_type = $op;
   drupal_write_record('quickpaylite_transactions', $transaction);
+
   // Return empty array if no amount or marchant number is present.
   if ($values['amount'] < 1 || empty($values['merchant'])) {
     quickpaylite_create_log($transaction->transaction_id, 'error', 'Invalid transaction, no amount or merchant number present');
-    return array();
+    return '';
   }
   switch ($op) {
     case 'standardwindow':
@@ -198,13 +254,33 @@ function quickpaylite_make_transaction($data, $op='standardwindow') {
  * @return array
  */
 function quickpaylite_load_settings($api_module='quickpaylite', $api_delta='default') {
+  $default_settings = array(
+    'merchant' => variable_get('quickpaylite_merchant', ''),
+    'md5check' => variable_get('quickpaylite_md5check', ''),
+    'currency' => variable_get('quickpaylite_currency', ''),
+    'autofee' => variable_get('quickpaylite_autofee', FALSE),
+    'autocapture' => variable_get('quickpaylite_autocapture', FALSE),
+    'testmode' => variable_get('quickpaylite_testmode', FALSE),
+    'language' => variable_get('quickpaylite_hosted_language', 'en'),
+  );
+
   $settings = db_fetch_array(db_query("SELECT * FROM {quickpaylite_implementations} WHERE api_module = '%s' AND api_delta = '%s';", $api_module, $api_delta));
   // Get default if no settings was found or the merchant what not set.
   if ($settings == FALSE || empty($settings['merchant'])) {
     $settings = db_fetch_array(db_query("SELECT * FROM {quickpaylite_implementations} WHERE api_module = 'quickpaylite' AND api_delta = 'default';"));
   }
-  // Failsafe, return empty array if no data was available.
-  return $settings ? $settings : array();
+
+  if (!is_array($settings)) {
+    return $default_settings;
+  }
+
+  foreach ($default_settings as $key => $value) {
+    if (!isset($settings[$key]) || empty($settings[$key])) {
+      $settings[$key] = $default_settings[$key];
+    }
+  }
+
+  return $settings;
 }
 
 /**
@@ -241,7 +317,10 @@ function quickpaylite_transaction_load($transaction_id) {
  */
 function quickpaylite_transaction_callback($transaction) {
   quickpaylite_create_log($transaction->transaction_id, 'captured', 'Registrered callback call from quickpaylite');
-  module_invoke($transaction->api_module, 'quickpayliteapi', 'transaction_callback', $transaction->api_delta, $transaction);
+  $function = $transaction->api_module . '_quickpayliteapi';
+  if (function_exists($function)) {
+    $function('transaction_callback', $transaction->api_delta, $transaction);
+  }
   exit();
 }
 
@@ -253,8 +332,11 @@ function quickpaylite_transaction_callback($transaction) {
  */
 function quickpaylite_transaction_complete($transaction) {
   quickpaylite_create_log($transaction->transaction_id, 'completed', 'User returned to the accept url');
-  $transaction->theme = 'quickpaylite_accept_page';
-  module_invoke($transaction->api_module, 'quickpayliteapi', 'transaction_complete', $transaction->api_delta, $transaction);
+  $transaction->theme = 'quickpaylite_complete_page';
+  $function = $transaction->api_module . '_quickpayliteapi';
+  if (function_exists($function)) {
+    $function('transaction_complete', $transaction->api_delta, $transaction);
+  }
   if (isset($transaction->redirect) && !empty($transaction->redirect)) {
     return drupal_goto($transaction->redirect);
   }
@@ -269,8 +351,11 @@ function quickpaylite_transaction_complete($transaction) {
  */
 function quickpaylite_transaction_cancel($transaction) {
   quickpaylite_create_log($transaction->transaction_id, 'canceled', 'User returned to the decline url');
-  $transaction->theme = 'quickpaylite_decline_page';
-  module_invoke($transaction->api_module, 'quickpayliteapi', 'transaction_cancel', $transaction->api_delta, $transaction);
+  $transaction->theme = 'quickpaylite_cancel_page';
+  $function = $transaction->api_module . '_quickpayliteapi';
+  if (function_exists($function)) {
+    $function('transaction_cancel', $transaction->api_delta, $transaction);
+  }
   if (isset($transaction->redirect) && !empty($transaction->redirect)) {
     return drupal_goto($transaction->redirect);
   }
@@ -282,7 +367,6 @@ function quickpaylite_transaction_cancel($transaction) {
  */
 function _quickpaylite_get_standardwindow($data, $add_js) {
   if ($add_js === TRUE) {
-    //drupal_set_html_head('<script type="text/javascript" src="http://www.quickpaylite.dk/js/standardwindow.js"></script>');
     drupal_add_js(drupal_get_path('module', 'quickpaylite') . '/quickpaylite.js');
   }
   return drupal_get_form('quickpaylite_standard_window_form', $data);
@@ -302,6 +386,18 @@ function _quickpaylite_get_standardwindow($data, $add_js) {
 function quickpaylite_standard_window_form($form_state, $data) {
   global $base_url;
   $hash = $data['hash'];
+
+  $overrides = array(
+    'continueurl' => "$base_url/payment/quickpaylite/continue/$hash",
+    'cancelurl' => "$base_url/payment/quickpaylite/cancel/$hash",
+    'callbackurl' => "$base_url/payment/quickpaylite/callback/$hash",
+  );
+
+  $data = $overrides + $data;
+
+  if ($data['testmode']) {
+    $data['ordernumber'] .= 'TEST';
+  }
 
   $md5_order = array(
     'protocol',
@@ -325,6 +421,7 @@ function quickpaylite_standard_window_form($form_state, $data) {
   foreach ($md5_order as $field) {
     $md5_string .= $data[$field];
   }
+
   $md5check = md5($md5_string . variable_get('quickpaylite_secret', ''));
 
   $form = array(
@@ -332,14 +429,19 @@ function quickpaylite_standard_window_form($form_state, $data) {
     '#id' => "quickpaylite",
   );
 
-  $form['merchant'] = array(
+  $form['protocol'] = array(
     '#type' => 'hidden',
-    '#value' => $data['merchant'],
+    '#value' => $data['protocol'],
   );
 
   $form['msgtype'] = array(
     '#type' => 'hidden',
     '#value' => $data['msgtype'],
+  );
+
+  $form['merchant'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['merchant'],
   );
 
   $form['language'] = array(
@@ -364,27 +466,27 @@ function quickpaylite_standard_window_form($form_state, $data) {
 
   $form['continueurl'] = array(
     '#type' => 'hidden',
-    '#value' => "$base_url/payment/quickpaylite/accept/$hash",
+    '#value' => $data['continueurl'],
   );
 
   $form['cancelurl'] = array(
     '#type' => 'hidden',
-    '#value' => "$base_url/payment/quickpaylite/decline/$hash",
+    '#value' => $data['cancelurl'],
   );
 
   $form['callbackurl'] = array(
     '#type' => 'hidden',
-    '#value' => "$base_url/payment/quickpaylite/callback/$hash",
+    '#value' => $data['callbackurl'],
   );
 
   $form['autocapture'] = array(
     '#type' => 'hidden',
-    '#value' => $date['autocapture'],
+    '#value' => $data['autocapture'],
   );
 
   $form['autofee'] = array(
     '#type' => 'hidden',
-    '#value' => $date['autofee'],
+    '#value' => $data['autofee'],
   );
 
   $form['cardtypelock'] = array(
@@ -404,7 +506,7 @@ function quickpaylite_standard_window_form($form_state, $data) {
 
   $form['md5check'] = array(
     '#type' => 'hidden',
-    '#value' => $data['quickpaylite_group'],
+    '#value' => $md5check,
   );
 
   // Executing the hook_quickpayliteapi_form_alter
@@ -418,51 +520,14 @@ function quickpaylite_standard_window_form($form_state, $data) {
 
 
 /**
- * Returns a list of all quickpay supported payment methods.
+ * Returns a list of all standard currencies used by quickpaylite.
  */
-function quickpaylite_all_cards() {
+function quickpaylite_currencies() {
   return array(
-    'dan' => t('Dankort'),
-    'edan' => t('eDankort'),
-    'visa' => t('Visa'),
+    'DKK' => t('Danske kroner'),
+    'SEK' => t('Svenske kroner'),
+    'NOK' => t('Norske kroner'),
+    'EUR' => t('Euro'),
+    'USD' => t('US Dollar'),
   );
-  
-$tmp =
-"dankort:dan:Dankort:dan.jpg
-edankort:edan:eDankort:edan.jpg
-visa:visa:Visa:visa.jpg
-visa-dk::Visa, issued in Denmark:visa.jpg
-3d-visa::Visa, issued in Denmark, using 3D-Secure:3d-visa.gif
-3d-visa-dk::Visa, using 3D-Secure:3d-visa.gif
-visa-electron:visael:Visa Electron:visaelectron.jpg
-visa-electron-dk::Visa Electron, issued in Denmark:visaelectron.jpg
-3d-visa-electron::Visa Electron, using 3D-Secure:
-3d-visa-electron-dk::Visa Electron, issued in Denmark, using 3D-Secure:
-mastercard:mastercard:Mastercard:mastercard.jpg
-mastercard-dk::Mastercard, issued in Denmark:mastercard.jpg
-3d-mastercard::Mastercard, using 3D-Secure:
-3d-mastercard-dk::Mastercard, issued in Denmark, using 3D-Secure:
-3d-maestro:maestro:Maestro:3d-maestro.gif
-3d-maestro-dk::Maestro, issued in Denmark:3d-maestro.gif
-jcb:jcb:JCB:jcb.jpg
-3d-jcb::JCB, using 3D-Secure:3d-jcb.gif
-diners:din:Diners:diners.jpg
-diners-dk::Diners, issued in Denmark:diners.jpg
-american-express:amex:American Express:amexpress.jpg
-american-express-dk::American Express, issued in Denmark:amexpress.jpg
-danske-dk:danskebank:Danske Netbetaling:danskebank.jpg
-nordea-dk:nordea:Nordea Netbetaling:nordea.jpg
-fbg1886:ff:Forbrugsforeningen:forbrugsforeningen.gif
-ikano:ikano:Ikano:ikano.jpg";
-
-}
-
-/**
- * Wrapper function to get the quickpaylite payment window and store info about the transaction.
- */
-function _quickpaylite_get_paymentwindow($data, $add_js) {
-  if ($add_js === TRUE) {
-    drupal_add_js(drupal_get_path('module', 'quickpaylite') . '/quickpaylite.js');
-  }
-  return drupal_get_form('quickpaylite_standard_window_form', $data);
 }

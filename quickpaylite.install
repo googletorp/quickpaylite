@@ -67,13 +67,6 @@ function quickpaylite_schema() {
         'default' => 'da',
         'description' => t('The language used on the screen.'),
       ),
-      'md5check' => array(
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => TRUE,
-        'default' => '',
-        'description' => t('The md5 password used for the transaction.'),
-      ),
       // Data
       'amount' => array(
         'type' => 'int',
@@ -140,7 +133,11 @@ function quickpaylite_schema() {
         'not null' => TRUE,
         'default' => '',
         'description' => t('A unique has used as identifier'),
-      )
+      ),
+      'data' => array(
+        'type' => 'text',
+        'description' => t('Serialized data that custom modules can use to save specific info.'),
+      ),
     ),
     'indexes' => array(
       'payment_time' => array('payment_time'),
@@ -185,6 +182,13 @@ function quickpaylite_schema() {
         'default' => '',
         'description' => t('The quickpaylite merchant number.'),
       ),
+      'md5check' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => t('The md5 password used for the transaction.'),
+      ),
       'currency' => array(
         'type' => 'varchar',
         'length' => 3,
@@ -204,18 +208,17 @@ function quickpaylite_schema() {
         'default' => 0,
         'description' => t('Whether or not the payment fee should be added to the transaction.'),
       ),
+      'testmode' => array(
+        'type' => 'int',
+        'size' => 'tiny',
+        'default' => 0,
+        'description' => t('Whether or not the test mode should be used for transactions.'),
+      ),
       'language' => array(
         'type' => 'varchar',
         'length' => 255,
         'default' => 'da',
         'description' => t('The language used on the screen.'),
-      ),
-      'md5secret' => array(
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => TRUE,
-        'default' => '',
-        'description' => t('The md5 password used for the transaction.'),
       ),
     ),
     'primary key' => array('implementation_id'),
