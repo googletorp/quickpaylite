@@ -1,6 +1,10 @@
 <?php
 // $Id$
 
+define(QUICKPAYLITE_PAYMENT_WINDOW, 'https://secure.quickpay.dk/form/');
+// The protocol version we implement.
+define(QUICKPAYLITE_VERSION, '3');
+
 /**
  * @file
  * Provides a simple integration of Quickpay payment
@@ -40,49 +44,31 @@ function quickpaylite_menu() {
     'file' => 'quickpaylite.admin.inc',
   );
 
-  $items['payment/%quickpaylite_payment'] = array(
-    'title' => 'Pay your order',
+  $items['payment/quickpaylite/callback/%quickpaylite_hash'] = array(
+    'title' => 'quickpaylite callback url',
+    'description' => '',
     'type' => MENU_CALLBACK,
-    'page callback' => 'quickpaylite_page_start',
-    'page arguments' => array(1, TRUE),
-    'access arguments' => array('make payments with Quickpay lite'),
-    'file' => 'quickpaylite.pages.inc',
-  );
-
-  $items['payment/%quickpaylite_payment/success'] = array(
-    'title' => 'Payment successful',
-    'type' => MENU_CALLBACK,
-    'page callback' => 'quickpaylite_page_success',
-    'page arguments' => array(1, TRUE),
-    'access arguments' => array('make payments with Quickpay lite'),
-    'file' => 'quickpaylite.pages.inc',
-  );
-
-  $items['payment/%quickpaylite_payment/error'] = array(
-    'title' => 'Payment error',
-    'type' => MENU_CALLBACK,
-    'page callback' => 'quickpaylite_page_error',
-    'page arguments' => array(1, TRUE),
-    'access arguments' => array('make payments with Quickpay lite'),
-    'file' => 'quickpaylite.pages.inc',
-  );
-
-  $items['payment/%quickpaylite_payment/result'] = array(
-    'title' => 'Quickpay endpoint',
-    'type' => MENU_CALLBACK,
-    'page callback' => 'quickpaylite_page_result',
-    'page arguments' => array(1, TRUE),
+    'page callback' => 'quickpaylite_transaction_callback',
+    'page arguments' => array(3),
     'access callback' => TRUE,
-    'file' => 'quickpaylite.pages.inc',
+  );
+  $items['payment/quickpaylite/accept/%quickpaylite_hash'] = array(
+    'title' => 'quickpaylite payment accepted',
+    'description' => '',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'quickpaylite_transaction_complete',
+    'page arguments' => array(3),
+    'access callback' => TRUE,
+  );
+  $items['payment/quickpaylite/decline/%quickpaylite_hash'] = array(
+    'title' => 'quickpaylite payment cancelled',
+    'description' => '',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'quickpaylite_transaction_cancel',
+    'page arguments' => array(3),
+    'access callback' => TRUE,
   );
 
-  $items['payment/pbs-unavailable'] = array(
-    'title' => 'PBS unavailable',
-    'type' => MENU_CALLBACK,
-    'page callback' => 'quickpaylite_page_pbs_unavailable',
-    'access arguments' => array('make payments with Quickpay lite'),
-    'file' => 'quickpaylite.pages.inc',
-  );
   return $items;
 }
 
@@ -94,6 +80,31 @@ function quickpaylite_menu() {
  */
 function quickpaylite_perm() {
   return array('administer Quickpay lite', 'make payments with Quickpay lite');
+}
+
+/**
+ * Create a record in the {quickpaylite_transaction_logs} table.
+ *
+ * @param int $transaction_id
+ *    The id of the transaction to send a message about.
+ * @param string $status
+ *    The status on the transaction.
+ * @param string $message
+ *    A message to store in the log.
+ * @param boolean $update
+ *    Indicator to set, if the transaction status should be updated.
+ */
+function quickpaylite_create_log($transaction_id, $status, $message='', $update=TRUE) {
+  $record = array(
+    'transaction_id' => $transaction_id,
+    'status' => $status,
+    'log_message' => $message,
+    'time' => time(),
+  );
+  drupal_write_record('quickpaylite_transaction_logs', $record);
+  if ($update) {
+    db_query("UPDATE {quickpaylite_transactions} SET status = '%s' WHERE transaction_id = %d;", $status, $transaction_id);
+  }
 }
 
 /**
@@ -115,75 +126,296 @@ function quickpaylite_theme() {
 }
 
 /**
- * Loader function for individual records.
+ * Implementation of hook_quickpayliteapi().
  *
- * Because we use '%quickpaylite_payment' as a wildcard in our hook_menu()
- * handler, this function will also be called automatically when we go to edit
- * or delete a record. Thanks, Menu API!.
- *
- * @param $string
- *   Either an int containing the ID of a record or the record's hash.
- * @param $hash_only
- *   If set, try loading from a hash value only, for security. Default FALSE.
- * @return
- *   A single record in object format, or FALSE if none matched the incoming ID.
+ * The settings for option "default" will be used as fall back for other implementations.
  */
-function quickpaylite_payment_load($string, $hash_only = FALSE) {
-  // SHA-1 hashes as hex are 40 characters
-  if (strlen($string) == 40) {
-    $sql = "SELECT * FROM {quickpaylite_payment} WHERE hash = '%s'";
-  }
-  elseif (!$hash_only && is_numeric($string) && $string > 0) {
-    $sql = "SELECT * FROM {quickpaylite_payment} WHERE payment_id = %d";
-  }
-  else {
-    return FALSE;
-  }
-
-  $result = db_query($sql, $string);
-  if ($record = db_fetch_object($result)) {
-    return $record;
-  }
-  else {
-    return FALSE;
+function quickpaylite_quickpayliteapi($op = 'info', $delta = NULL, &$transaction = NULL, $a3 = NULL, $a4 = NULL) {
+  switch ($op) {
+    case 'info':
+      $info['default'] = array('info' => t('Default'));
+      if (!empty($delta)) {
+        return isset($info[$delta]) ? $info[$delta] : NULL;
+      }
+      else {
+        return $info;
+      }
+      break;
   }
 }
 
 /**
- * Inserts a new record, or updates an existing one.
+ * API function for other modules used to create a form for quickpaylite.
  *
- * Automatically inserts or updates, based on whether the record's unique ID has
- * been set yet. Because drupal_write_record() updates the record itself (adding
- * the unique ID after the database has been updated), we return the record
- * after saving it.
- *
- * This allows any calling function to check the id of the returned record and
- * act on the ID as needed (redirecting to a 'view' page after inserting, etc).
- *
- * @param $record
- *   A record to be saved. If $record['payment_id'] is set, the record will be updated.
- *   Otherwise, a new record will be inserted into the database.
- * @return
- *   The saved record, with its ID set.
+ * @param string $op
+ *    Currently not used, can be used to specify which type of form is needed.
+ * @param array $data
+ *    The data for the transaction containing module implementing the transaction and
+ *    data on the actual transaction itself.
  */
-function quickpaylite_payment_save($payment) {
-  if (isset($payment['payment_id'])) {
-    drupal_write_record('quickpaylite_payment', $payment, 'payment_id');
+function quickpaylite_make_transaction($data, $op='standardwindow') {
+  $default = array(
+    'amount' => '',
+    'order_id' => '',
+    'ordre_text' => '',
+    'description_text' => '',
+    'api_module' => '',
+    'api_delta' => '',
+  );
+  $merged_default = array_merge($default, $data);
+  // Get settings info.
+  $settings = quickpaylite_load_settings($merged_default['api_module'], $merged_default['api_delta']);
+  // Create the values used in the transaction based on default (empty) values and settings.
+  // It is possible to overwrite all settings with the $data array.
+  $values = array_merge($settings, $merged_default);
+  // Create unique hash that can be used as identifier.
+  $values['hash'] = sha1(time() . drupal_get_private_key());
+  $transaction = (object) array_merge(array('payment_time' => time(), 'customer_uid' => $_GLOBALS['user']->uid), $values);
+  $transaction->transaction_type = $op;
+  drupal_write_record('quickpaylite_transactions', $transaction);
+  // Return empty array if no amount or marchant number is present.
+  if ($values['amount'] < 1 || empty($values['merchant'])) {
+    quickpaylite_create_log($transaction->transaction_id, 'error', 'Invalid transaction, no amount or merchant number present');
+    return array();
   }
-  else {
-    drupal_write_record('quickpaylite_payment', $payment);
+  switch ($op) {
+    case 'standardwindow':
+    default:
+      quickpaylite_create_log($transaction->transaction_id, 'in progress', 'Created standard window form.');
+      return _quickpaylite_get_standardwindow($values, TRUE);
+      break;
   }
-  return $payment;
 }
 
 /**
- * Writes a new entry to the log with data from the result page
+ * Load implemention settings, defaults to the quickpaylite settings.
+ *
+ * @param string $api_module
+ *    The name of the module that has implemented hook_quickpayliteapi op info
+ * @param string $api_delta
+ *    The delta of the implemented hook_quickpayliteapi op info.
+ *
+ * @return array
  */
-function quickpaylite_log_write($entry) {
-  drupal_write_record('quickpaylite_log', $entry);
-
-  return $entry;
+function quickpaylite_load_settings($api_module='quickpaylite', $api_delta='default') {
+  $settings = db_fetch_array(db_query("SELECT * FROM {quickpaylite_implementations} WHERE api_module = '%s' AND api_delta = '%s';", $api_module, $api_delta));
+  // Get default if no settings was found or the merchant what not set.
+  if ($settings == FALSE || empty($settings['merchant'])) {
+    $settings = db_fetch_array(db_query("SELECT * FROM {quickpaylite_implementations} WHERE api_module = 'quickpaylite' AND api_delta = 'default';"));
+  }
+  // Failsafe, return empty array if no data was available.
+  return $settings ? $settings : array();
 }
+
+/**
+ * Load function to get a transaction object from a hash
+ *
+ * @param string $hash
+ *    The hash of a transaction.
+ *
+ * @return object
+ *    Transaction object.
+ */
+function quickpaylite_hash_load($hash) {
+  return db_fetch_object(db_query("SELECT * FROM {quickpaylite_transactions} WHERE hash = '%s';", $hash));
+}
+
+/**
+ * Load function to get a transaction object from a transaction id.
+ *
+ * @param int $transaction_id
+ *    The id of a transaction.
+ *
+ * @return object
+ *    Transaction object.
+ */
+function quickpaylite_transaction_load($transaction_id) {
+  return db_fetch_object(db_query("SELECT * FROM {quickpaylite_transactions} WHERE transaction_id = %d;", $transaction_id));
+}
+
+/**
+ * Menu callback, called by quickpaylite when the payment is accepted before the redirect.
+ *
+ * @param object $transaction
+ *    The quickpaylite transaction object.
+ */
+function quickpaylite_transaction_callback($transaction) {
+  quickpaylite_create_log($transaction->transaction_id, 'captured', 'Registrered callback call from quickpaylite');
+  module_invoke($transaction->api_module, 'quickpayliteapi', 'transaction_callback', $transaction->api_delta, $transaction);
+  exit();
+}
+
+/**
+ * Menu callback, quickpaylite redirects to this url when the payment is accepted.
+ *
+ * @param object $transaction
+ *    The quickpaylite transaction object.
+ */
+function quickpaylite_transaction_complete($transaction) {
+  quickpaylite_create_log($transaction->transaction_id, 'completed', 'User returned to the accept url');
+  $transaction->theme = 'quickpaylite_accept_page';
+  module_invoke($transaction->api_module, 'quickpayliteapi', 'transaction_complete', $transaction->api_delta, $transaction);
+  if (isset($transaction->redirect) && !empty($transaction->redirect)) {
+    return drupal_goto($transaction->redirect);
+  }
+  return theme($transaction->theme, $transaction);
+}
+
+/**
+ * Menu callback, quickpaylite redirects to this url when the payment is declined.
+ *
+ * @param object $transaction
+ *    The quickpaylite transaction object.
+ */
+function quickpaylite_transaction_cancel($transaction) {
+  quickpaylite_create_log($transaction->transaction_id, 'canceled', 'User returned to the decline url');
+  $transaction->theme = 'quickpaylite_decline_page';
+  module_invoke($transaction->api_module, 'quickpayliteapi', 'transaction_cancel', $transaction->api_delta, $transaction);
+  if (isset($transaction->redirect) && !empty($transaction->redirect)) {
+    return drupal_goto($transaction->redirect);
+  }
+  return theme($transaction->theme, $transaction);
+}
+
+/**
+ * Wrapper function to get the quickpaylite payment window and store info about the transaction.
+ */
+function _quickpaylite_get_standardwindow($data, $add_js) {
+  if ($add_js === TRUE) {
+    //drupal_set_html_head('<script type="text/javascript" src="http://www.quickpaylite.dk/js/standardwindow.js"></script>');
+    drupal_add_js(drupal_get_path('module', 'quickpaylite') . '/quickpaylite.js');
+  }
+  return drupal_get_form('quickpaylite_standard_window_form', $data);
+}
+
+/**
+ * Form to create a form for the standard window.
+ *
+ * @param array $settings
+ *  An array containing all the settings - info stored from the admin backend.
+ * @param array $data
+ *    The actual data for the transaction, like the amount etc.
+ *
+ * @return array $form
+ *    Returns the form definition array.
+ */
+function quickpaylite_standard_window_form($form_state, $data) {
+  global $base_url;
+  $hash = $data['hash'];
+
+  $md5_order = array(
+    'protocol',
+    'msgtype',
+    'merchant',
+    'language',
+    'ordernumber',
+    'amount',
+    'currency',
+    'continueurl',
+    'cancelurl',
+    'callbackurl',
+    'autocapture',
+    'autofee',
+    'cardtypelock',
+    'description',
+    'testmode',
+  );
+
+  $md5_string = "";
+  foreach ($md5_order as $field) {
+    $md5_string .= $data[$field];
+  }
+  $md5check = md5($md5_string . variable_get('quickpaylite_secret', ''));
+
+  $form = array(
+    '#action' => QUICKPAYLITE_PAYMENT_WINDOW,
+    '#id' => "quickpaylite",
+  );
+
+  $form['merchant'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['merchant'],
+  );
+
+  $form['msgtype'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['msgtype'],
+  );
+
+  $form['language'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['language'],
+  );
+
+  $form['ordernumber'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['ordernumber'],
+  );
+
+  $form['amount'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['amount'],
+  );
+
+  $form['currency'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['currency'],
+  );
+
+  $form['continueurl'] = array(
+    '#type' => 'hidden',
+    '#value' => "$base_url/payment/quickpaylite/accept/$hash",
+  );
+
+  $form['cancelurl'] = array(
+    '#type' => 'hidden',
+    '#value' => "$base_url/payment/quickpaylite/decline/$hash",
+  );
+
+  $form['callbackurl'] = array(
+    '#type' => 'hidden',
+    '#value' => "$base_url/payment/quickpaylite/callback/$hash",
+  );
+
+  $form['autocapture'] = array(
+    '#type' => 'hidden',
+    '#value' => $date['autocapture'],
+  );
+
+  $form['autofee'] = array(
+    '#type' => 'hidden',
+    '#value' => $date['autofee'],
+  );
+
+  $form['cardtypelock'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['cardtypelock'],
+  );
+
+  $form['description'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['description'],
+  );
+
+  $form['testmode'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['testmode'],
+  );
+
+  $form['md5check'] = array(
+    '#type' => 'hidden',
+    '#value' => $data['quickpaylite_group'],
+  );
+
+  // Executing the hook_quickpayliteapi_form_alter
+  $func = $data['api_module'] .'_quickpaylite_form_alter';
+  if (function_exists($func)) {
+    $func($form, $data['api_delta']);
+  }
+
+  return $form;
+}
+
 
 /**
  * Returns a list of all quickpay supported payment methods.
@@ -223,4 +455,14 @@ nordea-dk:nordea:Nordea Netbetaling:nordea.jpg
 fbg1886:ff:Forbrugsforeningen:forbrugsforeningen.gif
 ikano:ikano:Ikano:ikano.jpg";
 
+}
+
+/**
+ * Wrapper function to get the quickpaylite payment window and store info about the transaction.
+ */
+function _quickpaylite_get_paymentwindow($data, $add_js) {
+  if ($add_js === TRUE) {
+    drupal_add_js(drupal_get_path('module', 'quickpaylite') . '/quickpaylite.js');
+  }
+  return drupal_get_form('quickpaylite_standard_window_form', $data);
 }
