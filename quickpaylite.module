@@ -238,7 +238,7 @@ function quickpaylite_make_transaction($data, $op='standardwindow') {
     case 'standardwindow':
     default:
       quickpaylite_create_log($transaction->transaction_id, 'in progress', 'Created standard window form.');
-      return _quickpaylite_get_standardwindow($values, TRUE);
+      return _quickpaylite_get_standardwindow($values, $transaction, TRUE);
       break;
   }
 }
@@ -256,7 +256,7 @@ function quickpaylite_make_transaction($data, $op='standardwindow') {
 function quickpaylite_load_settings($api_module='quickpaylite', $api_delta='default') {
   $default_settings = array(
     'merchant' => variable_get('quickpaylite_merchant', ''),
-    'md5check' => variable_get('quickpaylite_md5check', ''),
+    'md5secret' => variable_get('quickpaylite_md5secret', ''),
     'currency' => variable_get('quickpaylite_currency', ''),
     'autofee' => variable_get('quickpaylite_autofee', FALSE),
     'autocapture' => variable_get('quickpaylite_autocapture', FALSE),
@@ -324,11 +324,20 @@ function quickpaylite_transaction_load($transaction_id) {
  *    The quickpaylite transaction object.
  */
 function quickpaylite_transaction_callback($transaction) {
+  if (!isset($_POST['md5check']) || $_POST['md5check'] != $transaction->md5check) {
+    quickpaylite_create_log($transaction->transaction_id, 'notice', 'Unauthorised access to callback url, missing or invalid md5check');
+    exit();
+  }
+  if ($_POST['chstat'] == '000') {
+    $transaction->status = 'complete';
+  }
   quickpaylite_create_log($transaction->transaction_id, 'captured', 'Registrered callback call from quickpaylite');
   $function = $transaction->api_module . '_quickpayliteapi';
   if (function_exists($function)) {
     $function('transaction_callback', $transaction->api_delta, $transaction);
   }
+  // Update transaction.
+  drupal_write_record('quickpaylite_transactions', $transaction, 'transaction_id');
   exit();
 }
 
@@ -373,11 +382,11 @@ function quickpaylite_transaction_cancel($transaction) {
 /**
  * Wrapper function to get the quickpaylite payment window and store info about the transaction.
  */
-function _quickpaylite_get_standardwindow($data, $add_js) {
+function _quickpaylite_get_standardwindow($data, $transaction, $add_js) {
   if ($add_js === TRUE) {
     drupal_add_js(drupal_get_path('module', 'quickpaylite') . '/quickpaylite.js');
   }
-  return drupal_get_form('quickpaylite_standard_window_form', $data);
+  return drupal_get_form('quickpaylite_standard_window_form', $data, $transaction);
 }
 
 /**
@@ -391,7 +400,7 @@ function _quickpaylite_get_standardwindow($data, $add_js) {
  * @return array $form
  *    Returns the form definition array.
  */
-function quickpaylite_standard_window_form($form_state, $data) {
+function quickpaylite_standard_window_form($form_state, $data, $transaction) {
   global $base_url;
   $hash = $data['hash'];
 
@@ -430,7 +439,10 @@ function quickpaylite_standard_window_form($form_state, $data) {
     $md5_string .= $data[$field];
   }
 
-  $md5check = md5($md5_string . variable_get('quickpaylite_secret', ''));
+  $md5check = md5($md5_string . (isset($data['md5secret']) ? $data['md5secret'] : variable_get('quickpaylite_secret', '')));
+
+  $transaction->md5check = $md5check;
+  drupal_write_record('quickpaylite_transactions', $transaction, 'transaction_id');
 
   $form = array(
     '#action' => QUICKPAYLITE_PAYMENT_WINDOW,

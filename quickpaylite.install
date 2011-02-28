@@ -86,6 +86,12 @@ function quickpaylite_schema() {
         'default' => '',
         'description' => t('Order description'),
       ),
+      'md5check' => array(
+        'type' => 'varchar',
+        'length' => 65,
+        'default' => '',
+        'description' => t('The md5 check calculated for the order.'),
+      ),
       // Aditional info.
       'payment_time' => array(
         'type' => 'int',
@@ -182,7 +188,7 @@ function quickpaylite_schema() {
         'default' => '',
         'description' => t('The quickpaylite merchant number.'),
       ),
-      'md5check' => array(
+      'md5secret' => array(
         'type' => 'varchar',
         'length' => 255,
         'not null' => TRUE,

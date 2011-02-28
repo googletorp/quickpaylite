@@ -24,11 +24,11 @@ function quickpaylite_settings_form() {
     '#required' => TRUE,
   );
 
-  $form['quickpaylite_md5check'] = array(
+  $form['quickpaylite_md5secret'] = array(
     '#type' => 'textfield',
     '#title' => t('MD5 secret'),
     '#description' => t('MD5 secret as shown in the Quickpay admin.'),
-    '#default_value' => variable_get('quickpaylite_md5check', ''),
+    '#default_value' => variable_get('quickpaylite_md5secret', ''),
     '#required' => TRUE,
   );
 
@@ -137,11 +137,11 @@ function quickpaylite_admin_settings_form($form_state, $module, $delta) {
     '#required' => TRUE,
   );
 
-  $form['md5check'] = array(
+  $form['md5secret'] = array(
     '#type' => 'textfield',
     '#title' => t('MD5 secret'),
     '#description' => t('MD5 secret as shown in the Quickpay admin.'),
-    '#default_value' => $implementation->md5check,
+    '#default_value' => $implementation->md5secret,
     '#size' => 16,
     '#required' => TRUE,
   );
