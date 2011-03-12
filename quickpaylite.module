@@ -324,10 +324,6 @@ function quickpaylite_transaction_load($transaction_id) {
  *    The quickpaylite transaction object.
  */
 function quickpaylite_transaction_callback($transaction) {
-  if (!isset($_POST['md5check']) || $_POST['md5check'] != $transaction->md5check) {
-    quickpaylite_create_log($transaction->transaction_id, 'notice', 'Unauthorised access to callback url, missing or invalid md5check');
-    exit();
-  }
   if ($_POST['chstat'] == '000') {
     $transaction->status = 'complete';
   }
@@ -337,6 +333,7 @@ function quickpaylite_transaction_callback($transaction) {
     $function('transaction_callback', $transaction->api_delta, $transaction);
   }
   // Update transaction.
+  $transaction->data = serialize($transaction->data);
   drupal_write_record('quickpaylite_transactions', $transaction, 'transaction_id');
   exit();
 }
